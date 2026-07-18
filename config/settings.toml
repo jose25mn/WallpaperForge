@@ -1,0 +1,27 @@
+[scraper]
+limit          = 300
+timeout        = 30
+max_retries    = 3
+backoff_factor = 0.5
+user_agent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+[filter]
+min_side                  = 1100   # px — descarta imagens menores que isso
+hash_distance             = 5      # Hamming — limiar de duplicata (phash)
+border_variance_threshold = 100.0  # variância baixa nas bordas → watermark
+portrait_allowed          = false  # descartar orientação retrato
+
+[upscale]
+model        = "realesrgan-x4plus-anime"  # ou "realesrgan-x4plus" para arte realista
+tile_size    = 256                        # -t flag → respeita 4 GB VRAM da GTX 1650
+tile_padding = 10
+
+[output]
+format       = "png"   # "png" ou "jpeg"
+jpeg_quality = 95
+
+[paths]
+work_dir   = "work"
+output_dir = "output"
+bin_dir    = "bin"
+log_dir    = "logs"
