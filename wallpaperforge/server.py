@@ -85,6 +85,7 @@ def _make_thumb(path: Path) -> bytes:
     if cache_path.exists():
         return cache_path.read_bytes()
 
+    RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
     with Image.open(path) as im:
         if im.mode in ("RGBA", "LA", "P"):
             bg = Image.new("RGB", im.size, (10, 10, 20))
@@ -92,7 +93,7 @@ def _make_thumb(path: Path) -> bytes:
             im = bg
         elif im.mode != "RGB":
             im = im.convert("RGB")
-        im.thumbnail((THUMB_W, THUMB_H), Image.LANCZOS)
+        im.thumbnail((THUMB_W, THUMB_H), RESAMPLE)
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=85, optimize=True)
     data = buf.getvalue()
@@ -267,7 +268,8 @@ def get_full_image(img_id: str) -> Response:
         with Image.open(path) as im:
             if im.mode != "RGB":
                 im = im.convert("RGB")
-            im.thumbnail((1600, 1000), Image.LANCZOS)
+            RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
+            im.thumbnail((1600, 1000), RESAMPLE)
             buf = io.BytesIO()
             im.save(buf, "JPEG", quality=90)
         return Response(buf.getvalue(), media_type="image/jpeg")
@@ -348,6 +350,8 @@ def download_image(img_id: str, width: int = 0, height: int = 0) -> Response:
 
     try:
         from PIL import Image, ImageOps
+        RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS  # Pillow 9 e 10+
+
         with Image.open(path) as im:
             if im.mode == "RGBA":
                 bg = Image.new("RGB", im.size, (0, 0, 0))
@@ -357,22 +361,23 @@ def download_image(img_id: str, width: int = 0, height: int = 0) -> Response:
                 im = im.convert("RGB")
 
             if width > 0 and height > 0:
-                im = ImageOps.fit(im, (width, height), Image.LANCZOS)
+                im = ImageOps.fit(im.copy(), (width, height), RESAMPLE)
                 fname = f"{path.stem}_{width}x{height}.jpg"
             else:
                 fname = path.name
 
             buf = io.BytesIO()
             im.save(buf, "JPEG", quality=95, optimize=True)
-            buf.seek(0)
 
+        buf.seek(0)
         return Response(
             content=buf.read(),
             media_type="image/jpeg",
             headers={"Content-Disposition": f'attachment; filename="{fname}"'},
         )
     except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
+        log.error("Erro no download %s (%dx%d): %s", img_id, width, height, exc, exc_info=True)
+        raise HTTPException(500, f"Erro ao converter imagem: {exc}") from exc
 
 
 @app.post("/api/set-wallpaper")
