@@ -16,6 +16,8 @@ export interface Monitor {
   x:            number
   y:            number
   is_primary:   boolean
+  is_portrait:  boolean
+  orientation:  'portrait' | 'landscape'
   scale_factor: number
   manual:       boolean
   resolution:   string

@@ -6,10 +6,11 @@ Rotas:
   GET  /api/images              → lista de imagens com metadados
   GET  /api/thumbs/{id}         → thumbnail JPEG (gerado e cacheado)
   GET  /api/full/{id}           → imagem redimensionada para preview
-  GET  /api/monitors            → monitores detectados
+  GET  /api/monitors            → monitores detectados (com orientação)
   GET  /api/selection           → selection.json atual
   POST /api/selection           → salva seleção
   POST /api/process             → dispara pipeline
+  POST /api/set-wallpaper       → aplica wallpaper direto no monitor
   GET  /                        → SPA React (dist/)
 """
 
@@ -102,8 +103,11 @@ _id_to_path: dict[str, Path] = {}
 
 # ── Scrape tasks ──────────────────────────────────────────────────────────────
 
-_scrape_executor = ThreadPoolExecutor(max_workers=2)
-_scrape_tasks:   dict[str, asyncio.Queue] = {}   # task_id → asyncio.Queue
+_scrape_executor   = ThreadPoolExecutor(max_workers=2)
+_wallpaper_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wallpaper")
+_scrape_tasks:      dict[str, asyncio.Queue] = {}   # task_id → asyncio.Queue
+
+WALLPAPER_DIR = WORK_DIR / ".wallpapers"
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
@@ -131,6 +135,11 @@ class ScrapeRequest(BaseModel):
     query:  str | None = None
     url:    str | None = None
     limit:  int = 300
+
+
+class SetWallpaperRequest(BaseModel):
+    image_id:     str
+    monitor_name: str   # e.g. "\\.\DISPLAY1"
 
 
 # ── Scrape ────────────────────────────────────────────────────────────────────
@@ -295,6 +304,55 @@ def save_selection(payload: SelectionPayload) -> dict:
 def process_selection() -> dict:
     # Placeholder — integrar com pipeline completo
     return {"ok": True, "message": "Pipeline de processamento iniciado (stub)."}
+
+
+@app.post("/api/set-wallpaper")
+async def set_wallpaper_endpoint(req: SetWallpaperRequest) -> dict:
+    """Recorta a imagem para as dimensões do monitor e aplica como wallpaper."""
+    # Localiza a imagem
+    path = _id_to_path.get(req.image_id)
+    if not path:
+        for p in _find_all_images():
+            if _image_id(p) == req.image_id:
+                path = p
+                _id_to_path[req.image_id] = p
+                break
+    if not path or not path.exists():
+        raise HTTPException(404, "Imagem não encontrada")
+
+    # Localiza o monitor
+    from wallpaperforge.monitors import load_monitors
+    monitors = load_monitors()
+    monitor  = next((m for m in monitors if m.name == req.monitor_name), None)
+    if not monitor:
+        raise HTTPException(404, f"Monitor '{req.monitor_name}' não encontrado")
+
+    WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
+    safe    = req.monitor_name.replace("\\", "").replace(".", "").replace("/", "")
+    out     = WALLPAPER_DIR / f"{req.image_id}_{safe}_{monitor.width}x{monitor.height}.png"
+    img_snap = path      # capture for lambda
+    mon_snap = monitor   # capture for lambda
+
+    def _worker() -> dict:
+        from wallpaperforge.crop            import crop_image_for_monitor
+        from wallpaperforge.wallpaper_setter import set_wallpaper
+
+        result = crop_image_for_monitor(img_snap, mon_snap.width, mon_snap.height, out)
+        if not result.success:
+            return {"ok": False, "error": f"Recorte falhou: {result.reason}"}
+
+        ok = set_wallpaper(out, mon_snap.x, mon_snap.y)
+        if not ok:
+            return {"ok": False, "error": "Falha ao definir o wallpaper no Windows"}
+
+        return {"ok": True, "message": f"Wallpaper aplicado em {mon_snap.name}"}
+
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(_wallpaper_executor, _worker)
+
+    if not result["ok"]:
+        raise HTTPException(500, result["error"])
+    return result
 
 
 # ── Serve SPA React (produção) ────────────────────────────────────────────────

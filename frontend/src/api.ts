@@ -26,6 +26,8 @@ export const api = {
   process:       () => post<{ ok: boolean; message: string }>('/api/process', {}),
   startScrape:   (data: { query?: string; url?: string; limit: number }) =>
                    post<{ task_id: string }>('/api/scrape', data),
+  setWallpaper:  (data: { image_id: string; monitor_name: string }) =>
+                   post<{ ok: boolean; message: string }>('/api/set-wallpaper', data),
 
   thumbUrl: (id: string) => `/api/thumbs/${id}`,
   fullUrl:  (id: string) => `/api/full/${id}`,

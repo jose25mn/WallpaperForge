@@ -18,10 +18,11 @@ export default function App() {
   const [hovered,     setHovered]     = useState<ImageInfo | null>(null)
   const [sortKey,     setSortKey]     = useState<SortKey>('name')
   const [loading,     setLoading]     = useState(true)
-  const [searching,   setSearching]   = useState(false)
-  const [processing,  setProcessing]  = useState(false)
-  const [scrapeState, setScrapeState] = useState<ScrapeState | null>(null)
-  const [toast,       setToast]       = useState<string | null>(null)
+  const [searching,       setSearching]       = useState(false)
+  const [processing,      setProcessing]      = useState(false)
+  const [applyingMonitor, setApplyingMonitor] = useState<string | null>(null)
+  const [scrapeState,     setScrapeState]     = useState<ScrapeState | null>(null)
+  const [toast,           setToast]           = useState<string | null>(null)
   const evtSourceRef = useRef<EventSource | null>(null)
 
   // ── Carregamento inicial ─────────────────────────────────────────────────
@@ -158,6 +159,19 @@ export default function App() {
     finally   { setProcessing(false) }
   }
 
+  const handleApplyWallpaper = async (monitorName: string, imageId: string) => {
+    setApplyingMonitor(monitorName)
+    try {
+      const result = await api.setWallpaper({ image_id: imageId, monitor_name: monitorName })
+      showToast(`✓ ${result.message}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro desconhecido'
+      showToast(`Erro ao aplicar wallpaper: ${msg}`)
+    } finally {
+      setApplyingMonitor(null)
+    }
+  }
+
   const handleSaveExit = async () => {
     const imgs = images.filter(i => selected.has(i.id)).map(i => i.path)
     const mons = monitors.filter(m => selMonitors.has(m.name)).map(m => m.name)
@@ -200,11 +214,12 @@ export default function App() {
 
         <Sidebar
           total={images.length}
-          selectedCount={selected.size}
+          selectedImageIds={Array.from(selected)}
           hovered={hovered}
           monitors={monitors}
           selectedMonitors={selMonitors}
           processing={processing}
+          applyingMonitor={applyingMonitor}
           onMonitorToggle={name => {
             setSelMonitors(prev => {
               const next = new Set(prev)
@@ -216,6 +231,7 @@ export default function App() {
           onSelectNone={selectNone}
           onProcess={handleProcess}
           onSaveExit={handleSaveExit}
+          onApplyWallpaper={handleApplyWallpaper}
         />
       </div>
 

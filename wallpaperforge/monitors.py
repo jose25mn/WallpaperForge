@@ -87,9 +87,19 @@ class MonitorInfo:
     def resolution(self) -> str:
         return f"{self.width}x{self.height}"
 
+    @property
+    def is_portrait(self) -> bool:
+        return self.height > self.width
+
+    @property
+    def orientation(self) -> str:
+        return "portrait" if self.is_portrait else "landscape"
+
     def to_dict(self) -> dict:
         d = asdict(self)
-        d["resolution"] = self.resolution   # campo de conveniência (somente leitura)
+        d["resolution"]  = self.resolution
+        d["is_portrait"] = self.is_portrait
+        d["orientation"] = self.orientation
         return d
 
     @classmethod
@@ -333,10 +343,12 @@ def cmd_list_monitors() -> None:
     table.add_column("Posição",     justify="right", min_width=11)
     table.add_column("DPI",         justify="right", width=9)
     table.add_column("Escala",      justify="right", width=7)
+    table.add_column("Orientação",  justify="center", width=10)
     table.add_column("Primário",    justify="center", width=9)
     table.add_column("Manual",      justify="center", width=7)
 
     for i, m in enumerate(monitors, 1):
+        orient = "[magenta]Retrato[/magenta]" if m.is_portrait else "[cyan]Paisagem[/cyan]"
         table.add_row(
             str(i),
             m.name,
@@ -344,6 +356,7 @@ def cmd_list_monitors() -> None:
             f"({m.x}, {m.y})",
             f"{m.dpi_x}x{m.dpi_y}",
             f"{m.scale_factor * 100:.0f}%",
+            orient,
             "[bold green]✓[/bold green]" if m.is_primary else "",
             "[yellow]✓[/yellow]"         if m.manual    else "",
         )

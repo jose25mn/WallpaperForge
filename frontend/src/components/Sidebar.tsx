@@ -1,22 +1,24 @@
 import React from 'react'
 import {
   Monitor, Layers, Image, Info, Play, Save,
-  ChevronRight, Star,
+  Star, Tv2, Loader2,
 } from 'lucide-react'
 import type { ImageInfo, Monitor as MonitorType } from '../types'
 
 interface Props {
   total:            number
-  selectedCount:    number
+  selectedImageIds: string[]
   hovered:          ImageInfo | null
   monitors:         MonitorType[]
   selectedMonitors: Set<string>
   processing:       boolean
+  applyingMonitor:  string | null
   onMonitorToggle:  (name: string) => void
   onSelectAll:      () => void
   onSelectNone:     () => void
   onProcess:        () => void
   onSaveExit:       () => void
+  onApplyWallpaper: (monitorName: string, imageId: string) => void
 }
 
 function StatBox({ label, value, accent = false }: { label: string; value: string | number; accent?: boolean }) {
@@ -43,9 +45,14 @@ function Section({ icon, title, children }: { icon: React.ReactNode; title: stri
 }
 
 export default function Sidebar({
-  total, selectedCount, hovered, monitors, selectedMonitors,
-  processing, onMonitorToggle, onSelectAll, onSelectNone, onProcess, onSaveExit,
+  total, selectedImageIds, hovered, monitors, selectedMonitors,
+  processing, applyingMonitor,
+  onMonitorToggle, onSelectAll, onSelectNone, onProcess, onSaveExit,
+  onApplyWallpaper,
 }: Props) {
+  const selectedCount = selectedImageIds.length
+  const canApply      = selectedCount === 1
+
   return (
     <aside className="w-64 flex-shrink-0 flex flex-col border-l border-border
                       bg-surface overflow-y-auto">
@@ -74,6 +81,13 @@ export default function Sidebar({
                 </span>
                 <span className="text-[11px] text-muted">·</span>
                 <span className="text-[11px] text-muted">{hovered.megapixels} MP</span>
+                <span className="text-[11px] text-muted">·</span>
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full
+                  ${hovered.width < hovered.height
+                    ? 'bg-purple-500/15 text-purple-400'
+                    : 'bg-sky-500/15 text-sky-400'}`}>
+                  {hovered.width < hovered.height ? 'Retrato' : 'Paisagem'}
+                </span>
               </div>
             </div>
           ) : (
@@ -85,36 +99,85 @@ export default function Sidebar({
 
         {/* Monitors */}
         <Section icon={<Monitor size={13} />} title="Exportar para">
+          {canApply && (
+            <p className="text-[10px] text-accent-bright/80 -mt-1">
+              Clique em Aplicar para definir o wallpaper direto no monitor.
+            </p>
+          )}
           <div className="space-y-1.5">
             {monitors.length === 0 ? (
               <p className="text-xs text-muted">Nenhum monitor detectado</p>
             ) : (
-              monitors.map(m => (
-                <label
-                  key={m.name}
-                  className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg
-                             bg-card/50 border border-border/30 cursor-pointer
-                             hover:border-border transition-colors group"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedMonitors.has(m.name)}
-                    onChange={() => onMonitorToggle(m.name)}
-                    className="accent-indigo-500 w-3.5 h-3.5 flex-shrink-0"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] text-text-dim truncate font-medium">
-                        {m.name.replace(/\\\\.\\/, '')}
-                      </span>
-                      {m.is_primary && (
-                        <Star size={9} className="text-yellow-500 fill-yellow-500 flex-shrink-0" />
-                      )}
+              monitors.map(m => {
+                const isApplying = applyingMonitor === m.name
+                return (
+                  <label
+                    key={m.name}
+                    className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg
+                               bg-card/50 border border-border/30 cursor-pointer
+                               hover:border-border transition-colors group"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedMonitors.has(m.name)}
+                      onChange={() => onMonitorToggle(m.name)}
+                      className="accent-indigo-500 w-3.5 h-3.5 flex-shrink-0"
+                    />
+
+                    {/* Monitor icon — portrait vs landscape */}
+                    <span title={m.is_portrait ? 'Monitor em retrato' : 'Monitor em paisagem'}
+                          className="flex-shrink-0 text-muted">
+                      {m.is_portrait
+                        ? <Tv2 size={11} className="text-purple-400" />
+                        : <Monitor size={11} className="text-sky-400" />}
+                    </span>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-text-dim truncate font-medium">
+                          {m.name.replace(/\\\\.\\/, '')}
+                        </span>
+                        {m.is_primary && (
+                          <Star size={9} className="text-yellow-500 fill-yellow-500 flex-shrink-0" />
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted">{m.width}×{m.height}</span>
+                        <span className={`text-[9px] font-semibold px-1 rounded leading-tight
+                          ${m.is_portrait
+                            ? 'bg-purple-500/15 text-purple-400'
+                            : 'bg-sky-500/15 text-sky-400'}`}>
+                          {m.is_portrait ? '↕' : '↔'}
+                        </span>
+                      </div>
                     </div>
-                    <span className="text-[10px] text-muted">{m.width}×{m.height}</span>
-                  </div>
-                </label>
-              ))
+
+                    {/* Apply button — only shown when exactly 1 image selected */}
+                    {canApply && (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          onApplyWallpaper(m.name, selectedImageIds[0])
+                        }}
+                        disabled={isApplying}
+                        title={`Aplicar wallpaper em ${m.name.replace(/\\\\.\\/, '')}`}
+                        className={`flex-shrink-0 flex items-center justify-center
+                                    w-14 h-5 rounded text-[9px] font-bold transition-all
+                                    border
+                                    ${isApplying
+                                      ? 'border-accent/30 text-accent/50 cursor-not-allowed'
+                                      : 'border-accent/40 bg-accent/10 text-accent hover:bg-accent hover:text-white hover:border-accent'}`}
+                      >
+                        {isApplying
+                          ? <Loader2 size={9} className="animate-spin" />
+                          : 'Aplicar'}
+                      </button>
+                    )}
+                  </label>
+                )
+              })
             )}
           </div>
         </Section>
