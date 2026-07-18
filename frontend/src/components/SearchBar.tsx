@@ -1,30 +1,81 @@
 import React, { useState } from 'react'
-import { Search, Link, X, Loader2, Globe } from 'lucide-react'
+import { Search, Link, X, Loader2, Globe, Layers } from 'lucide-react'
 
-export type SearchMode = 'ddg' | 'wallhaven' | 'url'
+export type SearchMode = 'multi' | 'wallhaven' | 'bing' | 'ddg' | 'url'
+
+interface ModeOption {
+  key:   SearchMode
+  label: string
+  icon:  React.ReactNode
+  title: string
+  color: string
+}
+
+const MODES: ModeOption[] = [
+  {
+    key:   'multi',
+    label: 'Multi',
+    icon:  <Layers size={10} />,
+    title: 'Todas as fontes: Wallhaven + Bing + Reddit + DDG (melhor para temas específicos)',
+    color: 'bg-emerald-600 text-white',
+  },
+  {
+    key:   'wallhaven',
+    label: 'Wallhaven',
+    icon:  <Globe size={10} />,
+    title: 'Wallhaven — banco de wallpapers de alta qualidade',
+    color: 'bg-purple-600 text-white',
+  },
+  {
+    key:   'bing',
+    label: 'Bing',
+    icon:  <Search size={10} />,
+    title: 'Bing Images — maior cobertura geral',
+    color: 'bg-sky-600 text-white',
+  },
+  {
+    key:   'ddg',
+    label: 'DDG',
+    icon:  <Search size={10} />,
+    title: 'DuckDuckGo Images',
+    color: 'bg-accent text-white',
+  },
+  {
+    key:   'url',
+    label: 'URL',
+    icon:  <Link size={10} />,
+    title: 'gallery-dl — colar URL de galeria (Wallhaven, Pinterest, DeviantArt…)',
+    color: 'bg-accent text-white',
+  },
+]
+
+const ACTIVE_COLORS: Record<SearchMode, string> = {
+  multi:     'bg-emerald-600 text-white',
+  wallhaven: 'bg-purple-600 text-white',
+  bing:      'bg-sky-600 text-white',
+  ddg:       'bg-accent text-white',
+  url:       'bg-accent text-white',
+}
 
 interface Props {
   onSearch:  (value: string, mode: SearchMode, limit: number) => void
   searching: boolean
 }
 
-const MODES: { key: SearchMode; label: string; icon: React.ReactNode; title: string }[] = [
-  { key: 'ddg',       label: 'DDG',       icon: <Search size={10} />, title: 'DuckDuckGo Images' },
-  { key: 'wallhaven', label: 'Wallhaven', icon: <Globe  size={10} />, title: 'Wallhaven (recomendado para wallpapers)' },
-  { key: 'url',       label: 'URL',       icon: <Link   size={10} />, title: 'gallery-dl — colar URL de galeria' },
-]
-
 export default function SearchBar({ onSearch, searching }: Props) {
-  const [mode,  setMode]  = useState<SearchMode>('wallhaven')
+  const [mode,  setMode]  = useState<SearchMode>('multi')
   const [value, setValue] = useState('')
   const [limit, setLimit] = useState(150)
 
   const canSearch = value.trim().length > 0 && !searching
+  const isUrlMode = mode === 'url'
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (canSearch) onSearch(value.trim(), mode, limit)
   }
+
+  const activeCls = ACTIVE_COLORS[mode]
 
   return (
     <form onSubmit={handleSubmit} className="flex items-center gap-2 flex-1 max-w-2xl">
@@ -37,11 +88,9 @@ export default function SearchBar({ onSearch, searching }: Props) {
             type="button"
             onClick={() => setMode(m.key)}
             title={m.title}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors
+            className={`flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium transition-colors
               ${mode === m.key
-                ? m.key === 'wallhaven'
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-accent text-white'
+                ? ACTIVE_COLORS[m.key]
                 : 'bg-card text-muted hover:text-text'}`}
           >
             {m.icon}
@@ -57,11 +106,15 @@ export default function SearchBar({ onSearch, searching }: Props) {
           value={value}
           onChange={e => setValue(e.target.value)}
           placeholder={
-            mode === 'url'
-              ? 'Colar URL (Wallhaven, DeviantArt, Pinterest…)'
-              : mode === 'wallhaven'
-                ? 'Buscar wallpapers (ex: cyberpunk city, anime landscape…)'
-                : 'Buscar no DuckDuckGo (ex: Makoto Shinkai 4K…)'
+            isUrlMode
+              ? 'Colar URL (Wallhaven, Pinterest, DeviantArt…)'
+              : mode === 'multi'
+                ? 'Buscar em todas as fontes (ex: lord of the mysteries, cyberpunk 4k…)'
+                : mode === 'wallhaven'
+                  ? 'Buscar no Wallhaven (ex: anime landscape, dark fantasy…)'
+                  : mode === 'bing'
+                    ? 'Buscar no Bing Images (ex: makoto shinkai wallpaper 4k…)'
+                    : 'Buscar no DuckDuckGo…'
           }
           disabled={searching}
           className="w-full bg-card border border-border rounded-lg pl-4 pr-8 py-2
@@ -81,8 +134,8 @@ export default function SearchBar({ onSearch, searching }: Props) {
         )}
       </div>
 
-      {/* Limit selector (só para modos de busca por palavra-chave) */}
-      {mode !== 'url' && (
+      {/* Limit selector (só modos de keyword) */}
+      {!isUrlMode && (
         <select
           value={limit}
           onChange={e => setLimit(Number(e.target.value))}
@@ -91,11 +144,11 @@ export default function SearchBar({ onSearch, searching }: Props) {
                      text-text-dim focus:outline-none focus:border-accent/60
                      disabled:opacity-50 transition-colors flex-shrink-0"
         >
-          <option value={24}>24 imgs</option>
-          <option value={50}>50 imgs</option>
-          <option value={100}>100 imgs</option>
-          <option value={150}>150 imgs</option>
-          <option value={300}>300 imgs</option>
+          <option value={24}>24</option>
+          <option value={50}>50</option>
+          <option value={100}>100</option>
+          <option value={150}>150</option>
+          <option value={300}>300</option>
         </select>
       )}
 
@@ -106,15 +159,12 @@ export default function SearchBar({ onSearch, searching }: Props) {
         className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold
                     flex-shrink-0 transition-all
                     ${canSearch
-                      ? mode === 'wallhaven'
-                        ? 'bg-purple-600 hover:bg-purple-500 shadow-lg shadow-purple-900/30 text-white'
-                        : 'btn-glow text-white'
+                      ? `${activeCls} shadow-lg`
                       : 'bg-card border border-border text-muted cursor-not-allowed'}`}
       >
         {searching
           ? <><Loader2 size={14} className="animate-spin" /> Buscando…</>
-          : <><Search size={14} /> Buscar</>
-        }
+          : <><Search size={14} /> Buscar</>}
       </button>
     </form>
   )
