@@ -6,11 +6,13 @@ Rotas:
   GET  /api/images              → lista de imagens com metadados
   GET  /api/thumbs/{id}         → thumbnail JPEG (gerado e cacheado)
   GET  /api/full/{id}           → imagem redimensionada para preview
+  GET  /api/download/{id}       → download original ou convertido (?width=&height=)
   GET  /api/monitors            → monitores detectados (com orientação)
   GET  /api/selection           → selection.json atual
   POST /api/selection           → salva seleção
   POST /api/process             → dispara pipeline
   POST /api/set-wallpaper       → aplica wallpaper direto no monitor
+  DELETE /api/images            → limpa galeria
   GET  /                        → SPA React (dist/)
 """
 
@@ -329,6 +331,48 @@ def clear_images() -> dict:
     _id_to_path.clear()
     log.info("Galeria limpa: %d arquivo(s) removido(s).", cleared)
     return {"ok": True, "cleared": cleared}
+
+
+@app.get("/api/download/{img_id}")
+def download_image(img_id: str, width: int = 0, height: int = 0) -> Response:
+    """Retorna imagem como download, opcionalmente redimensionada (cover-fit)."""
+    path = _id_to_path.get(img_id)
+    if not path:
+        for p in _find_all_images():
+            if _image_id(p) == img_id:
+                path = p
+                _id_to_path[img_id] = p
+                break
+    if not path or not path.exists():
+        raise HTTPException(404, "Imagem não encontrada")
+
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(path) as im:
+            if im.mode == "RGBA":
+                bg = Image.new("RGB", im.size, (0, 0, 0))
+                bg.paste(im, mask=im.split()[3])
+                im = bg
+            elif im.mode != "RGB":
+                im = im.convert("RGB")
+
+            if width > 0 and height > 0:
+                im = ImageOps.fit(im, (width, height), Image.LANCZOS)
+                fname = f"{path.stem}_{width}x{height}.jpg"
+            else:
+                fname = path.name
+
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=95, optimize=True)
+            buf.seek(0)
+
+        return Response(
+            content=buf.read(),
+            media_type="image/jpeg",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @app.post("/api/set-wallpaper")

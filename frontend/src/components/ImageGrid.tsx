@@ -1,6 +1,6 @@
 import React from 'react'
 import { ImageOff } from 'lucide-react'
-import ImageTile    from './ImageTile'
+import ImageTile     from './ImageTile'
 import SearchOverlay from './SearchOverlay'
 import type { ImageInfo } from '../types'
 import type { ScrapeState } from './ScrapeProgress'
@@ -48,40 +48,45 @@ export default function ImageGrid({
   const isEmpty = images.length === 0
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 relative">
-      {/* Search loading overlay */}
+    /* Outer div: fixed size (flex-1), establishes positioning context for overlay */
+    <div className="flex-1 relative overflow-hidden">
+
+      {/* Loading overlay — always visible because it covers the outer fixed-size div */}
       {searching && scrapeState && (
         <SearchOverlay state={scrapeState} hasImages={!isEmpty} />
       )}
 
-      {isEmpty && !searching ? (
-        <div className="h-full flex flex-col items-center justify-center gap-4 text-text-dim">
-          <div className="w-20 h-20 rounded-2xl bg-card border border-border
-                          flex items-center justify-center">
-            <ImageOff size={36} className="text-muted" />
+      {/* Scrollable inner content */}
+      <div className="absolute inset-0 overflow-y-auto p-4">
+        {isEmpty && !searching ? (
+          <div className="h-full flex flex-col items-center justify-center gap-4 text-text-dim">
+            <div className="w-20 h-20 rounded-2xl bg-card border border-border
+                            flex items-center justify-center">
+              <ImageOff size={36} className="text-muted" />
+            </div>
+            <div className="text-center">
+              <p className="text-base font-medium text-text-dim">Nenhuma imagem</p>
+              <p className="text-sm text-muted mt-1">Pesquise um tema na barra de busca acima.</p>
+            </div>
           </div>
-          <div className="text-center">
-            <p className="text-base font-medium text-text-dim">Nenhuma imagem encontrada</p>
-            <p className="text-sm text-muted mt-1">Pesquise um tema na barra de busca acima.</p>
+        ) : (
+          <div
+            className="grid gap-3 animate-fade-in"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}
+          >
+            {images.map(img => (
+              <ImageTile
+                key={img.id}
+                image={img}
+                selected={selected.has(img.id)}
+                onToggle={onToggle}
+                onPreview={onPreview}
+                onHover={onHover}
+              />
+            ))}
           </div>
-        </div>
-      ) : (
-        <div
-          className="grid gap-3 animate-fade-in"
-          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}
-        >
-          {images.map(img => (
-            <ImageTile
-              key={img.id}
-              image={img}
-              selected={selected.has(img.id)}
-              onToggle={onToggle}
-              onPreview={onPreview}
-              onHover={onHover}
-            />
-          ))}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

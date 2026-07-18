@@ -255,7 +255,10 @@ export default function App() {
         <PreviewModal
           image={preview}
           images={sorted}
+          monitors={monitors}
+          applyingMonitor={applyingMonitor}
           onClose={() => setPreview(null)}
+          onApply={handleApplyWallpaper}
         />
       )}
 
