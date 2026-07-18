@@ -1,5 +1,5 @@
 import React from 'react'
-import { LayoutGrid, SortAsc, CheckSquare, Square, Zap } from 'lucide-react'
+import { LayoutGrid, SortAsc, CheckSquare, Square, Zap, Trash2 } from 'lucide-react'
 import SearchBar, { SearchMode } from './SearchBar'
 import type { SortKey } from '../types'
 
@@ -8,10 +8,12 @@ interface Props {
   selectedCount: number
   sortKey:       SortKey
   searching:     boolean
+  clearing:      boolean
   onSortChange:  (k: SortKey) => void
   onSelectAll:   () => void
   onSelectNone:  () => void
   onSearch:      (value: string, mode: SearchMode, limit: number) => void
+  onClear:       () => void
 }
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
@@ -22,8 +24,8 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ]
 
 export default function Toolbar({
-  total, selectedCount, sortKey, searching,
-  onSortChange, onSelectAll, onSelectNone, onSearch,
+  total, selectedCount, sortKey, searching, clearing,
+  onSortChange, onSelectAll, onSelectNone, onSearch, onClear,
 }: Props) {
   return (
     <header className="flex items-center gap-3 px-4 py-2.5 border-b border-border
@@ -98,6 +100,23 @@ export default function Toolbar({
         >
           <Square size={12} />
         </button>
+
+        {total > 0 && (
+          <>
+            <div className="w-px h-4 bg-border" />
+            <button
+              onClick={onClear}
+              disabled={clearing}
+              className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs
+                         text-red-400/70 hover:text-red-400 hover:bg-red-500/10
+                         disabled:opacity-40 transition-colors"
+              title="Limpar galeria (remove todas as imagens baixadas)"
+            >
+              <Trash2 size={12} />
+              {clearing ? 'Limpando…' : 'Limpar'}
+            </button>
+          </>
+        )}
       </div>
     </header>
   )

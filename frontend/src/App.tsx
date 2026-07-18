@@ -20,6 +20,7 @@ export default function App() {
   const [loading,     setLoading]     = useState(true)
   const [searching,       setSearching]       = useState(false)
   const [processing,      setProcessing]      = useState(false)
+  const [clearing,        setClearing]        = useState(false)
   const [applyingMonitor, setApplyingMonitor] = useState<string | null>(null)
   const [scrapeState,     setScrapeState]     = useState<ScrapeState | null>(null)
   const [toast,           setToast]           = useState<string | null>(null)
@@ -159,6 +160,21 @@ export default function App() {
     finally   { setProcessing(false) }
   }
 
+  const handleClear = async () => {
+    if (!window.confirm('Remover todas as imagens baixadas? Esta ação não pode ser desfeita.')) return
+    setClearing(true)
+    try {
+      const result = await api.clearImages()
+      setImages([])
+      setSelected(new Set())
+      showToast(`🗑 Galeria limpa — ${result.cleared} arquivo(s) removido(s)`)
+    } catch {
+      showToast('Erro ao limpar a galeria.')
+    } finally {
+      setClearing(false)
+    }
+  }
+
   const handleApplyWallpaper = async (monitorName: string, imageId: string) => {
     setApplyingMonitor(monitorName)
     try {
@@ -193,10 +209,12 @@ export default function App() {
         selectedCount={selected.size}
         sortKey={sortKey}
         searching={searching}
+        clearing={clearing}
         onSortChange={setSortKey}
         onSelectAll={selectAll}
         onSelectNone={selectNone}
         onSearch={handleSearch}
+        onClear={handleClear}
       />
 
       {/* Barra de progresso da busca */}

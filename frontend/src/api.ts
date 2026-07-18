@@ -28,6 +28,7 @@ export const api = {
                    post<{ task_id: string }>('/api/scrape', data),
   setWallpaper:  (data: { image_id: string; monitor_name: string }) =>
                    post<{ ok: boolean; message: string }>('/api/set-wallpaper', data),
+  clearImages:   () => fetch('/api/images', { method: 'DELETE' }).then(r => r.json()) as Promise<{ ok: boolean; cleared: number }>,
 
   thumbUrl: (id: string) => `/api/thumbs/${id}`,
   fullUrl:  (id: string) => `/api/full/${id}`,

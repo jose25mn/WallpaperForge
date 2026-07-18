@@ -307,6 +307,30 @@ def process_selection() -> dict:
     return {"ok": True, "message": "Pipeline de processamento iniciado (stub)."}
 
 
+@app.delete("/api/images")
+def clear_images() -> dict:
+    """Remove todas as imagens baixadas, thumbnails e seleção atual."""
+    import shutil
+
+    cleared = 0
+    for directory in (FILTERED_DIR, RAW_DIR, THUMB_CACHE, WALLPAPER_DIR):
+        if directory.exists():
+            for f in directory.iterdir():
+                try:
+                    if f.is_file():
+                        f.unlink()
+                        cleared += 1
+                except Exception:
+                    pass
+
+    if SELECTION_JSON.exists():
+        SELECTION_JSON.unlink(missing_ok=True)
+
+    _id_to_path.clear()
+    log.info("Galeria limpa: %d arquivo(s) removido(s).", cleared)
+    return {"ok": True, "cleared": cleared}
+
+
 @app.post("/api/set-wallpaper")
 async def set_wallpaper_endpoint(req: SetWallpaperRequest) -> dict:
     """Recorta a imagem para as dimensões do monitor e aplica como wallpaper."""
