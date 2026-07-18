@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import Toolbar        from './components/Toolbar'
-import ImageGrid      from './components/ImageGrid'
-import Sidebar        from './components/Sidebar'
-import PreviewModal   from './components/PreviewModal'
-import ScrapeProgress from './components/ScrapeProgress'
-import { api }        from './api'
+import Toolbar      from './components/Toolbar'
+import ImageGrid    from './components/ImageGrid'
+import Sidebar      from './components/Sidebar'
+import PreviewModal from './components/PreviewModal'
+import { api }      from './api'
 import type { ImageInfo, Monitor, SortKey } from './types'
 import type { SearchMode } from './components/SearchBar'
 import type { ScrapeState } from './components/ScrapeProgress'
@@ -217,14 +216,13 @@ export default function App() {
         onClear={handleClear}
       />
 
-      {/* Barra de progresso da busca */}
-      {scrapeState && <ScrapeProgress state={scrapeState} />}
-
       <div className="flex flex-1 overflow-hidden">
         <ImageGrid
           images={sorted}
           selected={selected}
           loading={loading}
+          searching={searching}
+          scrapeState={scrapeState}
           onToggle={toggle}
           onPreview={setPreview}
           onHover={setHovered}

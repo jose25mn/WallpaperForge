@@ -133,7 +133,8 @@ def _download_one(
         if existing.exists():
             return existing
 
-    MIN_BYTES = 40_000   # < 40 KB → thumbnail / ícone / infográfico
+    MIN_BYTES  = 60_000   # < 60 KB → thumbnail / ícone / infográfico
+    MIN_PIXELS = 1_000    # lado mínimo da dimensão menor (ex: 1000×562 ok; 800×450 rejeita)
 
     for attempt in range(retries):
         try:
@@ -141,12 +142,25 @@ def _download_one(
             if resp.status_code != 200:
                 return None
             if len(resp.content) < MIN_BYTES:
-                log.debug("Imagem muito pequena (%d B): %s", len(resp.content), url)
+                log.debug("Arquivo muito pequeno (%d B): %s", len(resp.content), url)
                 return None
             ct   = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
             ext  = _ext_from_url(url, ct)
             path = out_dir / f"{h}{ext}"
             path.write_bytes(resp.content)
+
+            # Verifica resolução real com PIL
+            try:
+                from PIL import Image as _PILImage
+                with _PILImage.open(path) as img:
+                    w, h_px = img.size
+                    if min(w, h_px) < MIN_PIXELS:
+                        log.debug("Resolução baixa (%dx%d): %s", w, h_px, url)
+                        path.unlink(missing_ok=True)
+                        return None
+            except Exception:
+                pass   # PIL indisponível ou formato exótico: mantém o arquivo
+
             manifest[h] = {"path": str(path), "url": url, "content_type": ct}
             return path
         except Exception as exc:
@@ -220,7 +234,7 @@ def _collect_bing(query: str, limit: int, progress: ProgressCb) -> list[str]:
     sig_words  = _sig_words(query)
     offset     = 0
     page_size  = 35
-    MIN_DIM    = 900      # pelo menos 900px no lado maior
+    MIN_DIM    = 1024     # pelo menos 1024px no lado maior
 
     search_q = f"{query} wallpaper 4k"
 
@@ -388,7 +402,7 @@ def _collect_ddg(query: str, limit: int) -> list[str]:
             return []
 
     sig_words = _sig_words(query)
-    MIN_DIM   = 900
+    MIN_DIM   = 1024
 
     urls: list[str] = []
     for attempt in range(3):
