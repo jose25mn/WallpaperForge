@@ -24,6 +24,8 @@ export const api = {
   getSelection:  () => get<Selection>('/api/selection'),
   saveSelection: (data: Selection) => post<{ ok: boolean; count: number }>('/api/selection', data),
   process:       () => post<{ ok: boolean; message: string }>('/api/process', {}),
+  startScrape:   (data: { query?: string; url?: string; limit: number }) =>
+                   post<{ task_id: string }>('/api/scrape', data),
 
   thumbUrl: (id: string) => `/api/thumbs/${id}`,
   fullUrl:  (id: string) => `/api/full/${id}`,

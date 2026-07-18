@@ -1,31 +1,35 @@
 """Backend FastAPI para a interface web do WallpaperForge.
 
 Rotas:
-  GET  /api/images            → lista de imagens com metadados
-  GET  /api/thumbs/{id}       → thumbnail JPEG (gerado e cacheado)
-  GET  /api/full/{id}         → imagem redimensionada para preview
-  GET  /api/monitors          → monitores detectados
-  GET  /api/selection         → selection.json atual
-  POST /api/selection         → salva seleção
-  POST /api/process           → dispara pipeline
-  GET  /                      → SPA React (dist/)
+  POST /api/scrape              → inicia coleta (retorna task_id)
+  GET  /api/scrape/stream/{id}  → SSE de progresso da coleta
+  GET  /api/images              → lista de imagens com metadados
+  GET  /api/thumbs/{id}         → thumbnail JPEG (gerado e cacheado)
+  GET  /api/full/{id}           → imagem redimensionada para preview
+  GET  /api/monitors            → monitores detectados
+  GET  /api/selection           → selection.json atual
+  POST /api/selection           → salva seleção
+  POST /api/process             → dispara pipeline
+  GET  /                        → SPA React (dist/)
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
 import logging
-import os
+import uuid
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Timer
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -96,6 +100,11 @@ def _make_thumb(path: Path) -> bytes:
 # Mapa id → Path (reconstruído a cada requisição ao endpoint de lista)
 _id_to_path: dict[str, Path] = {}
 
+# ── Scrape tasks ──────────────────────────────────────────────────────────────
+
+_scrape_executor = ThreadPoolExecutor(max_workers=2)
+_scrape_tasks:   dict[str, asyncio.Queue] = {}   # task_id → asyncio.Queue
+
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
@@ -116,6 +125,74 @@ app.add_middleware(
 class SelectionPayload(BaseModel):
     images:   list[str]
     monitors: list[str]
+
+
+class ScrapeRequest(BaseModel):
+    query:  str | None = None
+    url:    str | None = None
+    limit:  int = 300
+
+
+# ── Scrape ────────────────────────────────────────────────────────────────────
+
+@app.post("/api/scrape")
+async def start_scrape(req: ScrapeRequest) -> dict:
+    """Inicia a coleta em background; retorna task_id para seguir via SSE."""
+    if not req.query and not req.url:
+        raise HTTPException(400, "Forneça 'query' ou 'url'.")
+
+    task_id = uuid.uuid4().hex[:10]
+    q: asyncio.Queue = asyncio.Queue()
+    _scrape_tasks[task_id] = q
+
+    loop = asyncio.get_event_loop()
+
+    def _run() -> None:
+        from wallpaperforge.scraper import run_scrape
+
+        def _cb(msg: dict) -> None:
+            loop.call_soon_threadsafe(q.put_nowait, msg)
+
+        try:
+            run_scrape(query=req.query, url=req.url, limit=req.limit, progress=_cb)
+        except Exception as exc:
+            loop.call_soon_threadsafe(q.put_nowait, {"step": "error", "message": str(exc)})
+        finally:
+            loop.call_soon_threadsafe(q.put_nowait, None)  # sentinela de fim
+
+    loop.run_in_executor(_scrape_executor, _run)
+    return {"task_id": task_id}
+
+
+@app.get("/api/scrape/stream/{task_id}")
+async def scrape_stream(task_id: str) -> StreamingResponse:
+    """SSE: transmite o progresso da coleta em tempo real."""
+    q = _scrape_tasks.get(task_id)
+    if q is None:
+        raise HTTPException(404, "Task não encontrada.")
+
+    async def event_gen():
+        try:
+            while True:
+                msg = await asyncio.wait_for(q.get(), timeout=30)
+                if msg is None:
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    break
+                yield f"data: {json.dumps(msg)}\n\n"
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'heartbeat': True})}\n\n"
+        finally:
+            _scrape_tasks.pop(task_id, None)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection":    "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Rotas API ─────────────────────────────────────────────────────────────────
