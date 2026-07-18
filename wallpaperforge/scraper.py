@@ -1,11 +1,11 @@
 """Coleta de imagens — estágio 2.
 
 Fontes suportadas:
-  - DuckDuckGo Images (palavra-chave via ddgs)
-  - gallery-dl (URL de board/tag — Pinterest, DeviantArt, Wallhaven, etc.)
+  ddg       → DuckDuckGo Images (ddgs, com retry automático)
+  wallhaven → Wallhaven API v1 (sem chave, SFW, ótima para wallpapers)
+  url       → gallery-dl (Pinterest, DeviantArt, Wallhaven, etc.)
 
-Download concorrente com httpx (semáforo de 8 workers), retry/backoff,
-User-Agent de browser real.  Tudo salvo em work/raw/ com manifest.json.
+Download concorrente httpx, retry/backoff.  Salvo em work/raw/ + manifest.json.
 """
 
 from __future__ import annotations
@@ -26,14 +26,14 @@ log = logging.getLogger(__name__)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
-WORK_DIR   = Path.cwd() / "work"
-RAW_DIR    = WORK_DIR / "raw"
-MANIFEST   = RAW_DIR / "manifest.json"
+WORK_DIR = Path.cwd() / "work"
+RAW_DIR  = WORK_DIR / "raw"
+MANIFEST = RAW_DIR / "manifest.json"
 
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 EXT_MAP        = {"image/jpeg": ".jpg", "image/png": ".png",
                   "image/webp": ".webp", "image/gif": ".gif"}
-USER_AGENT     = (
+USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
@@ -80,12 +80,11 @@ def _download_one(
     *,
     retries: int = 3,
 ) -> Path | None:
-    """Baixa uma URL e salva em out_dir. Retorna o Path ou None se falhou."""
     h = _url_hash(url)
     if h in manifest:
         existing = Path(manifest[h]["path"])
         if existing.exists():
-            return existing   # já baixada, reusar
+            return existing
 
     for attempt in range(retries):
         try:
@@ -100,7 +99,7 @@ def _download_one(
             return path
         except Exception as exc:
             if attempt < retries - 1:
-                time.sleep(0.5 * (2 ** attempt))   # backoff exponencial
+                time.sleep(0.5 * (2 ** attempt))
             else:
                 log.debug("Falha ao baixar %s: %s", url, exc)
     return None
@@ -109,40 +108,126 @@ def _download_one(
 # ── DuckDuckGo Images ──────────────────────────────────────────────────────────
 
 def _collect_ddg(query: str, limit: int) -> list[str]:
-    """Coleta URLs de imagens via DuckDuckGo; retorna lista de URLs."""
+    """Coleta URLs via DuckDuckGo Images (ddgs). Retorna lista de URLs."""
     try:
-        from duckduckgo_search import DDGS
-        urls: list[str] = []
-        with DDGS() as ddgs:
-            for r in ddgs.images(query, max_results=limit):
-                url = r.get("image", "")
-                if url:
-                    urls.append(url)
-        log.info("DDG: %d URLs coletadas para '%s'", len(urls), query)
-        return urls
-    except Exception as exc:
-        log.error("Erro DuckDuckGo: %s", exc)
-        return []
+        from ddgs import DDGS  # pacote novo (substituto de duckduckgo-search)
+    except ImportError:
+        try:
+            from duckduckgo_search import DDGS  # type: ignore[no-redef]
+        except ImportError:
+            log.error("ddgs não instalado. Execute: pip install ddgs")
+            return []
+
+    urls: list[str] = []
+    attempts = 0
+    max_attempts = 3
+
+    while attempts < max_attempts and len(urls) < limit:
+        try:
+            with DDGS() as ddgs:
+                for r in ddgs.images(query, max_results=limit):
+                    url = r.get("image", "")
+                    if url:
+                        urls.append(url)
+            break
+        except Exception as exc:
+            attempts += 1
+            msg = str(exc)
+            if "Ratelimit" in msg or "429" in msg or "403" in msg:
+                if attempts < max_attempts:
+                    wait = 3 * attempts
+                    log.warning("DDG ratelimit (tentativa %d/%d); aguardando %ds…", attempts, max_attempts, wait)
+                    time.sleep(wait)
+                else:
+                    log.error("DDG bloqueado após %d tentativas. Use 'Wallhaven' como fonte.", max_attempts)
+            else:
+                log.error("Erro DDG: %s", exc)
+                break
+
+    log.info("DDG: %d URLs para '%s'", len(urls), query)
+    return urls
+
+
+# ── Wallhaven API ──────────────────────────────────────────────────────────────
+
+_WALLHAVEN_URL = "https://wallhaven.cc/api/v1/search"
+
+def _collect_wallhaven(query: str, limit: int, progress: ProgressCb) -> list[str]:
+    """
+    Coleta URLs diretas de imagens via Wallhaven API v1.
+
+    Sem API key → apenas conteúdo SFW.
+    """
+    urls: list[str] = []
+    page     = 1
+    per_page = 24
+
+    with httpx.Client(headers=HEADERS, verify=False, timeout=10) as client:
+        while len(urls) < limit:
+            try:
+                resp = client.get(
+                    _WALLHAVEN_URL,
+                    params={
+                        "q":          query,
+                        "categories": "111",   # geral + anime + pessoas
+                        "purity":     "100",   # SFW
+                        "sorting":    "relevance",
+                        "page":       page,
+                    },
+                )
+                if resp.status_code != 200:
+                    log.warning("Wallhaven API status %d na página %d", resp.status_code, page)
+                    break
+
+                body  = resp.json()
+                items = body.get("data", [])
+                if not items:
+                    break
+
+                for item in items:
+                    path = item.get("path")
+                    if path:
+                        urls.append(path)
+                    if len(urls) >= limit:
+                        break
+
+                meta      = body.get("meta", {})
+                last_page = meta.get("last_page", 1)
+                progress({
+                    "step":    "collecting",
+                    "message": f"Wallhaven: {len(urls)} URLs (página {page}/{last_page})…",
+                    "done":    len(urls),
+                    "total":   min(limit, meta.get("total", limit)),
+                })
+
+                if page >= last_page:
+                    break
+                page += 1
+
+            except Exception as exc:
+                log.error("Wallhaven API erro: %s", exc)
+                break
+
+    log.info("Wallhaven: %d URLs para '%s'", len(urls), query)
+    return urls[:limit]
 
 
 # ── gallery-dl ─────────────────────────────────────────────────────────────────
 
 def _collect_gallery_dl(url: str, out_dir: Path, progress: ProgressCb) -> int:
-    """Usa gallery-dl (subprocess) para baixar imagens de uma URL de galeria."""
     try:
         result = subprocess.run(
             ["gallery-dl", "--directory", str(out_dir), url],
             capture_output=True, text=True, timeout=300,
         )
         if result.returncode != 0:
-            log.warning("gallery-dl saiu com código %d: %s", result.returncode, result.stderr[:200])
-        count = sum(1 for _ in out_dir.iterdir()
-                    if _.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"})
-        progress({"step": "gallery-dl", "message": f"gallery-dl: {count} arquivo(s) baixado(s)", "done": count, "total": count})
+            log.warning("gallery-dl saiu %d: %s", result.returncode, result.stderr[:200])
+        count = sum(1 for f in out_dir.iterdir()
+                    if f.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"})
+        progress({"step": "gallery-dl", "message": f"gallery-dl: {count} arquivo(s)", "done": count, "total": count})
         return count
     except FileNotFoundError:
-        progress({"step": "error", "message": "gallery-dl não encontrado. Instale com: pip install gallery-dl"})
-        log.error("gallery-dl não encontrado no PATH.")
+        progress({"step": "error", "message": "gallery-dl não encontrado. Instale: pip install gallery-dl"})
         return 0
     except subprocess.TimeoutExpired:
         progress({"step": "error", "message": "gallery-dl excedeu o tempo limite."})
@@ -159,7 +244,6 @@ def _download_batch(
     *,
     workers: int = 8,
 ) -> int:
-    """Baixa lista de URLs em paralelo. Retorna contagem de sucessos."""
     out_dir.mkdir(parents=True, exist_ok=True)
     success = 0
     total   = len(urls)
@@ -171,8 +255,7 @@ def _download_batch(
                 for url in urls
             }
             for i, future in enumerate(as_completed(futures), 1):
-                result = future.result()
-                if result:
+                if future.result():
                     success += 1
                 progress({
                     "step":    "downloading",
@@ -190,22 +273,24 @@ def _download_batch(
 
 def run_scrape(
     *,
-    query: str | None = None,
-    url:   str | None = None,
-    limit: int = 300,
+    query:    str | None = None,
+    url:      str | None = None,
+    limit:    int = 300,
+    source:   str = "ddg",   # "ddg" | "wallhaven" | (ignorado se url fornecida)
     progress: ProgressCb = lambda _: None,
 ) -> int:
     """
-    Executa a coleta de imagens e retorna o número de arquivos baixados.
+    Executa a coleta e retorna o número de arquivos baixados.
 
     Args:
-        query:    Palavra-chave para busca DuckDuckGo Images.
-        url:      URL de board/tag/galeria para gallery-dl.
-        limit:    Número máximo de imagens (só aplica ao DDG).
-        progress: Callback chamado com dicts de progresso.
+        query:   Palavra-chave (DDG ou Wallhaven).
+        url:     URL de galeria/board para gallery-dl.
+        limit:   Máximo de imagens.
+        source:  "ddg" ou "wallhaven" (ignorado quando url é fornecida).
+        progress: Callback de progresso.
     """
     if not query and not url:
-        log.error("Forneça --query ou --url.")
+        log.error("Forneça query ou url.")
         return 0
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -213,32 +298,38 @@ def run_scrape(
 
     # ── URL → gallery-dl ──────────────────────────────────────────────────────
     if url:
-        progress({"step": "collecting", "message": f"Coletando via gallery-dl: {url}", "done": 0, "total": 1})
+        progress({"step": "collecting", "message": f"gallery-dl: {url}", "done": 0, "total": 1})
         return _collect_gallery_dl(url, RAW_DIR, progress)
 
-    # ── Palavra-chave → DDG + download ───────────────────────────────────────
-    progress({"step": "collecting", "message": f"Buscando '{query}' no DuckDuckGo…", "done": 0, "total": limit})
-    urls = _collect_ddg(query, limit)
+    # ── Palavra-chave → coleta de URLs ────────────────────────────────────────
+    if source == "wallhaven":
+        progress({"step": "collecting", "message": f"Buscando '{query}' no Wallhaven…", "done": 0, "total": limit})
+        urls = _collect_wallhaven(query, limit, progress)
+        source_name = "Wallhaven"
+    else:
+        progress({"step": "collecting", "message": f"Buscando '{query}' no DuckDuckGo…", "done": 0, "total": limit})
+        urls = _collect_ddg(query, limit)
+        source_name = "DuckDuckGo"
 
     if not urls:
-        progress({"step": "error", "message": "Nenhuma imagem encontrada. Tente outro termo."})
+        progress({"step": "error", "message": f"Nenhuma imagem encontrada em {source_name}. Tente outro termo ou fonte."})
         return 0
 
     progress({"step": "downloading", "message": f"{len(urls)} URLs encontradas. Iniciando download…", "done": 0, "total": len(urls)})
     count = _download_batch(urls, RAW_DIR, manifest, progress)
     progress({"step": "done", "message": f"Concluído: {count}/{len(urls)} imagens baixadas.", "done": count, "total": len(urls)})
-    log.info("Scrape concluído: %d/%d imagens em %s", count, len(urls), RAW_DIR)
+    log.info("Scrape (%s) concluído: %d/%d em %s", source_name, count, len(urls), RAW_DIR)
     return count
 
 
 # ── CLI handler ────────────────────────────────────────────────────────────────
 
 def cmd_scrape(
-    query: str | None = None,
-    url:   str | None = None,
-    limit: int = 300,
+    query:  str | None = None,
+    url:    str | None = None,
+    limit:  int = 300,
+    source: str = "ddg",
 ) -> None:
-    """Handler do subcomando `python -m wallpaperforge scrape`."""
     from rich.console import Console
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 
@@ -255,12 +346,12 @@ def cmd_scrape(
     ) as prog:
         task_id = prog.add_task("Coletando…", total=limit)
 
-        def progress_cb(msg: dict) -> None:
-            total = msg.get("total", limit)
-            done  = msg.get("done", 0)
-            text  = msg.get("message", "")
-            prog.update(task_id, completed=done, total=max(total, 1), description=text)
+        def cb(msg: dict) -> None:
+            prog.update(task_id,
+                        completed=msg.get("done", 0),
+                        total=max(msg.get("total", limit), 1),
+                        description=msg.get("message", ""))
 
-        count = run_scrape(query=query, url=url, limit=limit, progress=progress_cb)
+        count = run_scrape(query=query, url=url, limit=limit, source=source, progress=cb)
 
-    console.print(f"[bold green]✓[/] {count} imagem(ns) salva(s) em [cyan]{RAW_DIR}[/]")
+    console.print(f"[bold green]✓[/] {count} imagem(ns) em [cyan]{RAW_DIR}[/]")

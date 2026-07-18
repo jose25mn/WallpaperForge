@@ -24,7 +24,7 @@ export const api = {
   getSelection:  () => get<Selection>('/api/selection'),
   saveSelection: (data: Selection) => post<{ ok: boolean; count: number }>('/api/selection', data),
   process:       () => post<{ ok: boolean; message: string }>('/api/process', {}),
-  startScrape:   (data: { query?: string; url?: string; limit: number }) =>
+  startScrape:   (data: { query?: string; url?: string; limit: number; source?: string }) =>
                    post<{ task_id: string }>('/api/scrape', data),
   setWallpaper:  (data: { image_id: string; monitor_name: string }) =>
                    post<{ ok: boolean; message: string }>('/api/set-wallpaper', data),

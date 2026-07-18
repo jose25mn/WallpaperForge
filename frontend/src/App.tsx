@@ -87,7 +87,7 @@ export default function App() {
     try {
       const body = mode === 'url'
         ? { url: value,  limit }
-        : { query: value, limit }
+        : { query: value, limit, source: mode }  // "ddg" | "wallhaven"
 
       const { task_id } = await api.startScrape(body)
 

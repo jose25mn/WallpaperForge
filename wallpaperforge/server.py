@@ -135,6 +135,7 @@ class ScrapeRequest(BaseModel):
     query:  str | None = None
     url:    str | None = None
     limit:  int = 300
+    source: str = "ddg"   # "ddg" | "wallhaven"
 
 
 class SetWallpaperRequest(BaseModel):
@@ -163,7 +164,7 @@ async def start_scrape(req: ScrapeRequest) -> dict:
             loop.call_soon_threadsafe(q.put_nowait, msg)
 
         try:
-            run_scrape(query=req.query, url=req.url, limit=req.limit, progress=_cb)
+            run_scrape(query=req.query, url=req.url, limit=req.limit, source=req.source, progress=_cb)
         except Exception as exc:
             loop.call_soon_threadsafe(q.put_nowait, {"step": "error", "message": str(exc)})
         finally:

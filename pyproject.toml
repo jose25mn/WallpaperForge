@@ -15,7 +15,7 @@ dependencies = [
     "screeninfo>=0.8.1",
     # HTTP / scraping
     "httpx[http2]>=0.27.0",
-    "duckduckgo-search>=6.2.0",
+    "ddgs>=9.0.0",
     # image processing
     "Pillow>=10.3.0",
     "imagehash>=4.3.1",
