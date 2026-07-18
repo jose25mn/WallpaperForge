@@ -133,10 +133,15 @@ def _download_one(
         if existing.exists():
             return existing
 
+    MIN_BYTES = 40_000   # < 40 KB → thumbnail / ícone / infográfico
+
     for attempt in range(retries):
         try:
             resp = client.get(url, timeout=20, follow_redirects=True)
             if resp.status_code != 200:
+                return None
+            if len(resp.content) < MIN_BYTES:
+                log.debug("Imagem muito pequena (%d B): %s", len(resp.content), url)
                 return None
             ct   = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
             ext  = _ext_from_url(url, ct)
@@ -207,13 +212,16 @@ def _collect_bing(query: str, limit: int, progress: ProgressCb) -> list[str]:
     """
     Bing Images HTML scraping — maior cobertura, sem API key.
 
-    Extrai blobs JSON da classe 'iusc' para obter URLs diretas das imagens.
+    Filtra por:
+    - Relevância de título (campo "t" do blob JSON)
+    - Resolução mínima (campos "imgw"/"imgh", quando presentes)
     """
-    urls: list[str] = []
-    offset    = 0
-    page_size = 35
+    urls:      list[str] = []
+    sig_words  = _sig_words(query)
+    offset     = 0
+    page_size  = 35
+    MIN_DIM    = 900      # pelo menos 900px no lado maior
 
-    # Adiciona contexto de wallpaper para resultados melhores
     search_q = f"{query} wallpaper 4k"
 
     bing_headers = {
@@ -221,6 +229,20 @@ def _collect_bing(query: str, limit: int, progress: ProgressCb) -> list[str]:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
     }
+
+    def _accept(data: dict) -> str | None:
+        """Retorna murl se o blob passa nos filtros; None caso contrário."""
+        u = data.get("murl", "")
+        if not u or not u.startswith("http"):
+            return None
+        title = data.get("t", "") or ""
+        if not _title_matches(title, sig_words):
+            return None
+        w = int(data.get("imgw", 0) or 0)
+        h = int(data.get("imgh", 0) or 0)
+        if w > 0 and h > 0 and max(w, h) < MIN_DIM:
+            return None
+        return u
 
     with httpx.Client(headers=bing_headers, verify=False, timeout=15) as client:
         while len(urls) < limit:
@@ -240,7 +262,7 @@ def _collect_bing(query: str, limit: int, progress: ProgressCb) -> list[str]:
                 for m in re.finditer(r'm=&quot;(\{[^&]+\})&quot;', resp.text):
                     try:
                         data = json.loads(html_mod.unescape(m.group(1)))
-                        if (u := data.get("murl", "")) and u.startswith("http"):
+                        if (u := _accept(data)):
                             urls.append(u)
                             found += 1
                     except Exception:
@@ -251,7 +273,7 @@ def _collect_bing(query: str, limit: int, progress: ProgressCb) -> list[str]:
                     for m in re.finditer(r'class="iusc"[^>]+?m="(\{.+?\})"', resp.text, re.DOTALL):
                         try:
                             data = json.loads(html_mod.unescape(m.group(1)))
-                            if (u := data.get("murl", "")) and u.startswith("http"):
+                            if (u := _accept(data)):
                                 urls.append(u)
                                 found += 1
                         except Exception:
@@ -261,7 +283,7 @@ def _collect_bing(query: str, limit: int, progress: ProgressCb) -> list[str]:
                     break
 
                 progress({"step": "collecting",
-                          "message": f"Bing: {len(urls)} URLs…",
+                          "message": f"Bing: {len(urls)} URLs relevantes…",
                           "done": min(len(urls), limit), "total": limit})
 
                 offset += page_size
@@ -271,7 +293,7 @@ def _collect_bing(query: str, limit: int, progress: ProgressCb) -> list[str]:
                 log.error("Bing: %s", exc)
                 break
 
-    result = list(dict.fromkeys(urls))[:limit]   # dedup
+    result = list(dict.fromkeys(urls))[:limit]
     log.info("Bing: %d URLs para '%s'", len(result), query)
     return result
 
@@ -352,7 +374,10 @@ def _collect_reddit(query: str, limit: int, progress: ProgressCb) -> list[str]:
 # ── DuckDuckGo Images ──────────────────────────────────────────────────────────
 
 def _collect_ddg(query: str, limit: int) -> list[str]:
-    """DuckDuckGo Images via ddgs com retry em ratelimit."""
+    """DuckDuckGo Images via ddgs com retry em ratelimit.
+
+    Filtra por relevância de título e resolução mínima (DDG inclui w/h nos metadados).
+    """
     try:
         from ddgs import DDGS
     except ImportError:
@@ -362,13 +387,27 @@ def _collect_ddg(query: str, limit: int) -> list[str]:
             log.error("ddgs não instalado. Execute: pip install ddgs")
             return []
 
+    sig_words = _sig_words(query)
+    MIN_DIM   = 900
+
     urls: list[str] = []
     for attempt in range(3):
         try:
             with DDGS() as ddgs:
-                for r in ddgs.images(query, max_results=limit):
-                    if (u := r.get("image", "")):
-                        urls.append(u)
+                for r in ddgs.images(query, max_results=limit * 3):
+                    u     = r.get("image", "")
+                    title = r.get("title", "") or ""
+                    w     = int(r.get("width",  0) or 0)
+                    h     = int(r.get("height", 0) or 0)
+                    if not u:
+                        continue
+                    if not _title_matches(title, sig_words):
+                        continue
+                    if w > 0 and h > 0 and max(w, h) < MIN_DIM:
+                        continue
+                    urls.append(u)
+                    if len(urls) >= limit:
+                        break
             break
         except Exception as exc:
             msg = str(exc)
