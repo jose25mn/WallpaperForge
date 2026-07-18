@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import subprocess
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -214,10 +215,21 @@ def _collect_wallhaven(query: str, limit: int, progress: ProgressCb) -> list[str
 
 # ── gallery-dl ─────────────────────────────────────────────────────────────────
 
+def _gallery_dl_exe() -> str:
+    """Retorna o caminho do gallery-dl no venv atual, ou 'gallery-dl' via PATH."""
+    scripts = Path(sys.executable).parent
+    for name in ("gallery-dl.exe", "gallery-dl"):
+        candidate = scripts / name
+        if candidate.exists():
+            return str(candidate)
+    return "gallery-dl"
+
+
 def _collect_gallery_dl(url: str, out_dir: Path, progress: ProgressCb) -> int:
+    exe = _gallery_dl_exe()
     try:
         result = subprocess.run(
-            ["gallery-dl", "--directory", str(out_dir), url],
+            [exe, "--directory", str(out_dir), url],
             capture_output=True, text=True, timeout=300,
         )
         if result.returncode != 0:
@@ -227,7 +239,7 @@ def _collect_gallery_dl(url: str, out_dir: Path, progress: ProgressCb) -> int:
         progress({"step": "gallery-dl", "message": f"gallery-dl: {count} arquivo(s)", "done": count, "total": count})
         return count
     except FileNotFoundError:
-        progress({"step": "error", "message": "gallery-dl não encontrado. Instale: pip install gallery-dl"})
+        progress({"step": "error", "message": f"gallery-dl não encontrado em {exe}. Tente: pip install gallery-dl"})
         return 0
     except subprocess.TimeoutExpired:
         progress({"step": "error", "message": "gallery-dl excedeu o tempo limite."})
@@ -302,17 +314,48 @@ def run_scrape(
         return _collect_gallery_dl(url, RAW_DIR, progress)
 
     # ── Palavra-chave → coleta de URLs ────────────────────────────────────────
+    _FALLBACK_THRESHOLD = 12   # abaixo disso, complementa com a outra fonte
+
     if source == "wallhaven":
         progress({"step": "collecting", "message": f"Buscando '{query}' no Wallhaven…", "done": 0, "total": limit})
         urls = _collect_wallhaven(query, limit, progress)
         source_name = "Wallhaven"
+
+        # Complementa com DDG quando Wallhaven tem poucos resultados
+        if len(urls) < _FALLBACK_THRESHOLD:
+            remaining = limit - len(urls)
+            progress({"step": "collecting",
+                      "message": f"Wallhaven: {len(urls)} resultado(s). Complementando com DuckDuckGo…",
+                      "done": len(urls), "total": limit})
+            ddg_extras = _collect_ddg(query, remaining)
+            seen = set(urls)
+            for u in ddg_extras:
+                if u not in seen:
+                    urls.append(u)
+                    seen.add(u)
+            source_name = f"Wallhaven ({len(urls) - len(ddg_extras)}) + DDG ({len(ddg_extras)})" if ddg_extras else "Wallhaven"
     else:
         progress({"step": "collecting", "message": f"Buscando '{query}' no DuckDuckGo…", "done": 0, "total": limit})
         urls = _collect_ddg(query, limit)
         source_name = "DuckDuckGo"
 
+        # Complementa com Wallhaven quando DDG falha/retorna pouco
+        if len(urls) < _FALLBACK_THRESHOLD:
+            remaining = limit - len(urls)
+            progress({"step": "collecting",
+                      "message": f"DDG: {len(urls)} resultado(s). Complementando com Wallhaven…",
+                      "done": len(urls), "total": limit})
+            wh_extras = _collect_wallhaven(query, remaining, progress)
+            seen = set(urls)
+            for u in wh_extras:
+                if u not in seen:
+                    urls.append(u)
+                    seen.add(u)
+            if wh_extras:
+                source_name = f"DDG + Wallhaven"
+
     if not urls:
-        progress({"step": "error", "message": f"Nenhuma imagem encontrada em {source_name}. Tente outro termo ou fonte."})
+        progress({"step": "error", "message": f"Nenhuma imagem encontrada para '{query}'. Tente outro termo."})
         return 0
 
     progress({"step": "downloading", "message": f"{len(urls)} URLs encontradas. Iniciando download…", "done": 0, "total": len(urls)})
