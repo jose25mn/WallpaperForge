@@ -48,12 +48,20 @@ HEADERS = {"User-Agent": USER_AGENT, "Accept": "image/*,*/*;q=0.8"}
 
 ProgressCb = Callable[[dict], None]
 
-# ── Reddit subreddits para busca de wallpapers/fan art ────────────────────────
+# ── Reddit subreddits — apenas comunidades de arte/fan-art temáticas ──────────
+# Removidos r/wallpaper e r/wallpapers: são genéricos demais e retornam
+# centenas de wallpapers sem relação com a query.
 REDDIT_SUBS = [
-    "wallpaper", "wallpapers", "WidescreenWallpaper",
-    "ImaginaryLandscapes", "ImaginaryCharacters", "AnimeWallpaper",
-    "Art", "DigitalArt", "DarkFantasy",
+    "ImaginaryCharacters", "ImaginaryLandscapes", "ImaginaryMonsters",
+    "AnimeWallpaper", "DigitalArt", "Art", "DarkFantasy", "ImaginaryWastelands",
 ]
+
+# Palavras que não ajudam a filtrar relevância
+_STOP_WORDS = {
+    "a", "an", "the", "of", "in", "on", "at", "for", "to", "with",
+    "and", "or", "is", "are", "it", "its", "by", "as", "from", "that",
+    "this", "was", "be", "but",
+}
 
 
 # ── Manifest ───────────────────────────────────────────────────────────────────
@@ -83,6 +91,20 @@ def _ext_from_url(url: str, content_type: str) -> str:
         return EXT_MAP[content_type]
     path_ext = Path(urlparse(url).path).suffix.lower()
     return path_ext if path_ext in {".jpg", ".jpeg", ".png", ".webp"} else ".jpg"
+
+
+def _sig_words(query: str) -> list[str]:
+    """Extrai palavras significativas da query (len > 2, não stop-words)."""
+    return [w.lower() for w in query.split()
+            if len(w) > 2 and w.lower() not in _STOP_WORDS]
+
+
+def _title_matches(title: str, sig_words: list[str]) -> bool:
+    """True se o título do post contém pelo menos uma palavra significativa da query."""
+    if not sig_words:
+        return True
+    t = title.lower()
+    return any(w in t for w in sig_words)
 
 
 def _merge_unique(base: list[str], *extra: list[str]) -> list[str]:
@@ -260,10 +282,13 @@ def _collect_reddit(query: str, limit: int, progress: ProgressCb) -> list[str]:
     """
     Reddit public JSON API — posts de topo de todos os tempos.
 
-    Busca em múltiplos subreddits; extrai URLs diretas de imagens e previews.
+    Busca em subreddits temáticos de arte/fan-art e filtra por relevância de
+    título: apenas posts cujo título contém pelo menos uma palavra significativa
+    da query são aceitos.
     """
-    urls: list[str] = []
+    urls:      list[str] = []
     IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+    sig_words  = _sig_words(query)          # palavras que realmente importam
 
     reddit_headers = {
         "User-Agent": "WallpaperForge/1.0",
@@ -278,31 +303,40 @@ def _collect_reddit(query: str, limit: int, progress: ProgressCb) -> list[str]:
                 resp = client.get(
                     f"https://www.reddit.com/r/{sub}/search.json",
                     params={"q": query, "restrict_sr": "true",
-                            "sort": "top", "t": "all", "limit": 50},
+                            "sort": "top", "t": "all", "limit": 100},
                 )
                 if resp.status_code != 200:
                     time.sleep(0.5)
                     continue
 
-                posts = resp.json().get("data", {}).get("children", [])
+                posts  = resp.json().get("data", {}).get("children", [])
+                before = len(urls)
+
                 for post in posts:
-                    pd = post.get("data", {})
+                    pd    = post.get("data", {})
+                    title = pd.get("title", "")
+
+                    # Rejeita posts sem relação com a query
+                    if not _title_matches(title, sig_words):
+                        continue
 
                     # URL direta de imagem
                     url = pd.get("url", "")
                     if url and Path(urlparse(url).path).suffix.lower() in IMAGE_EXTS:
                         urls.append(url)
 
-                    # Preview de alta resolução
+                    # Preview em alta resolução (>= 1280px)
                     for img in pd.get("preview", {}).get("images", []):
-                        src = img.get("source", {})
+                        src     = img.get("source", {})
                         src_url = src.get("url", "").replace("&amp;", "&")
-                        if src_url and src.get("width", 0) >= 1000:
+                        if src_url and src.get("width", 0) >= 1280:
                             urls.append(src_url)
                             break
 
+                accepted = len(urls) - before
+                log.debug("Reddit r/%s: %d/%d posts aceitos", sub, accepted, len(posts))
                 progress({"step": "collecting",
-                          "message": f"Reddit r/{sub}: {len(urls)} URLs…",
+                          "message": f"Reddit r/{sub}: {accepted} relevantes — total {len(urls)}",
                           "done": min(len(urls), limit), "total": limit})
                 time.sleep(0.3)
 
@@ -310,7 +344,7 @@ def _collect_reddit(query: str, limit: int, progress: ProgressCb) -> list[str]:
                 log.debug("Reddit r/%s: %s", sub, exc)
                 time.sleep(0.5)
 
-    result = list(dict.fromkeys(urls))[:limit]   # dedup
+    result = list(dict.fromkeys(urls))[:limit]
     log.info("Reddit: %d URLs para '%s'", len(result), query)
     return result
 
